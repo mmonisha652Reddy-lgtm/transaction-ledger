@@ -42,7 +42,31 @@ def get_db():
         db.close()
 
 
+# Transactions are immutable: the database itself refuses UPDATE, and refuses
+# DELETE unless the whole account is being deleted (see models.AccountDeletion).
+_TRIGGERS = (
+    "DROP TRIGGER IF EXISTS trg_transactions_no_update",
+    """
+    CREATE TRIGGER trg_transactions_no_update
+    BEFORE UPDATE ON transactions
+    BEGIN SELECT RAISE(ABORT, 'transactions are immutable'); END
+    """,
+    "DROP TRIGGER IF EXISTS trg_transactions_no_delete",
+    """
+    CREATE TRIGGER trg_transactions_no_delete
+    BEFORE DELETE ON transactions
+    WHEN NOT EXISTS (SELECT 1 FROM account_deletions WHERE account_id = OLD.account_id)
+    BEGIN SELECT RAISE(ABORT, 'transactions are immutable'); END
+    """,
+)
+
+
 def init_db():
     from app import models  # noqa: F401  (registers tables)
 
     Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "sqlite":
+        # Recreated on every start so existing databases get the current rules.
+        with engine.begin() as conn:
+            for sql in _TRIGGERS:
+                conn.exec_driver_sql(sql)

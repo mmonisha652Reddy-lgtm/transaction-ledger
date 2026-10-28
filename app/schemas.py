@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from app.models import Account, Transaction
 from app.money import from_cents
@@ -22,18 +22,26 @@ class RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
+class _OptionalDescription(RequestModel):
+    @field_validator("description", mode="before", check_fields=False)
+    @classmethod
+    def _null_means_empty(cls, v):
+        # Description is optional: null is treated the same as leaving it out.
+        return "" if v is None else v
+
+
 class AccountCreate(RequestModel):
     name: str = Field(min_length=1, max_length=100, examples=["Alice"])
 
 
-class TransactionCreate(RequestModel):
+class TransactionCreate(_OptionalDescription):
     type: TransactionType
     amount: Decimal = Field(gt=0, le=MAX_AMOUNT, decimal_places=2, examples=[100.50])
     description: str = Field(default="", max_length=255, examples=["Salary"])
     reference_id: str = Field(min_length=1, max_length=100, examples=["INV-1001"])
 
 
-class TransferCreate(RequestModel):
+class TransferCreate(_OptionalDescription):
     from_account_id: str = Field(min_length=1)
     to_account_id: str = Field(min_length=1)
     amount: Decimal = Field(gt=0, le=MAX_AMOUNT, decimal_places=2, examples=[30])
@@ -61,6 +69,13 @@ class AccountOut(BaseModel):
     @classmethod
     def build(cls, a: Account) -> "AccountOut":
         return cls(id=a.id, name=a.name, balance=from_cents(a.balance), created_at=a.created_at)
+
+
+class AccountDeletedOut(BaseModel):
+    deleted_account_id: str
+    name: str
+    final_balance: float
+    deleted_transactions: int
 
 
 class BalanceOut(BaseModel):

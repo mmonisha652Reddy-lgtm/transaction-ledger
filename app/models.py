@@ -2,7 +2,6 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    DDL,
     BigInteger,
     CheckConstraint,
     DateTime,
@@ -10,7 +9,6 @@ from sqlalchemy import (
     Index,
     String,
     UniqueConstraint,
-    event,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -58,18 +56,15 @@ class Transaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
 
-# Transactions are immutable: the database itself refuses UPDATE and DELETE,
-# not only the API (which simply has no such endpoints).
-for _ddl in (
+class AccountDeletion(Base):
+    """Short-lived marker used only while an account is being deleted.
+
+    The database refuses to delete transactions (see database.py), except for
+    accounts listed here. The service adds the marker, deletes the account's
+    transactions and the account, then removes the marker, all in one
+    transaction. Afterwards nothing is left behind.
     """
-    CREATE TRIGGER IF NOT EXISTS trg_transactions_no_update
-    BEFORE UPDATE ON transactions
-    BEGIN SELECT RAISE(ABORT, 'transactions are immutable'); END;
-    """,
-    """
-    CREATE TRIGGER IF NOT EXISTS trg_transactions_no_delete
-    BEFORE DELETE ON transactions
-    BEGIN SELECT RAISE(ABORT, 'transactions are immutable'); END;
-    """,
-):
-    event.listen(Transaction.__table__, "after_create", DDL(_ddl).execute_if(dialect="sqlite"))
+
+    __tablename__ = "account_deletions"
+
+    account_id: Mapped[str] = mapped_column(String(36), primary_key=True)

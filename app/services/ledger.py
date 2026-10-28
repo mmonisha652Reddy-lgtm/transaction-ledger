@@ -7,12 +7,12 @@ never saved without its balance change (and a transfer is never half done).
 import math
 import uuid
 
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import AccountNotFound, DuplicateTransaction, InsufficientBalance, SameAccountTransfer
-from app.models import Account, Transaction
+from app.models import Account, AccountDeletion, Transaction
 from app.money import from_cents, to_cents
 from app.schemas import TransactionCreate, TransactionOut, TransactionType, TransferCreate
 
@@ -31,6 +31,26 @@ def get_account(db: Session, account_id: str) -> Account:
     if account is None:
         raise AccountNotFound(account_id)
     return account
+
+
+def delete_account(db: Session, account_id: str) -> dict:
+    """Permanently delete an account and all of its transactions, atomically."""
+    with db.begin():
+        account = get_account(db, account_id)
+        info = {
+            "id": account.id,
+            "name": account.name,
+            "balance": account.balance,
+            "deleted_transactions": db.scalar(
+                select(func.count()).select_from(Transaction).where(Transaction.account_id == account_id)
+            ),
+        }
+        db.execute(insert(AccountDeletion).values(account_id=account_id))
+        db.execute(delete(Transaction).where(Transaction.account_id == account_id))
+        db.execute(delete(Account).where(Account.id == account_id))
+        db.execute(delete(AccountDeletion).where(AccountDeletion.account_id == account_id))
+    db.expunge_all()
+    return info
 
 
 def list_accounts(db: Session, page: int, limit: int) -> tuple[list[Account], int]:

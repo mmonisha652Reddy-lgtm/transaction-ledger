@@ -43,7 +43,7 @@ On Render's free plan the filesystem is temporary, so the SQLite data resets whe
 pytest -q
 ```
 
-The 63 tests cover every requirement in the brief, including concurrent debits, concurrent duplicate submissions, and rollback on failure.
+The 74 tests cover every requirement in the brief, including concurrent debits, concurrent duplicate submissions, and rollback on failure.
 
 ---
 
@@ -53,7 +53,7 @@ The frontend is a single page ([app/static/index.html](app/static/index.html)) w
 
 - Dashboard showing total accounts, total money held, and total transactions
 - Account list with search (press `/` to focus it)
-- Account view with balance, total credited and debited, last activity, and a button to copy the account ID
+- Account view with balance, total credited and debited, last activity, a button to copy the account ID, and a Delete button with a confirmation pop-up
 - Transaction history with Credit/Debit filter, page size, numbered pagination, loading placeholders, and messages for empty lists
 - Forms for new accounts, credits/debits and transfers. They preview the balance after the change, warn before an overdraft, and show the API's error messages next to the relevant field
 - Light and dark themes (follows the system setting, with a toggle), works on phone screens, keyboard accessible
@@ -91,6 +91,7 @@ Base URL: `http://localhost:8000`. All request and response bodies are JSON.
 | POST | `/accounts` | Create an account | 201 |
 | GET | `/accounts` | List accounts (paginated) | 200 |
 | GET | `/accounts/{account_id}` | Get an account | 200 |
+| DELETE | `/accounts/{account_id}` | Delete an account **and all its transactions** | 200 |
 | GET | `/accounts/{account_id}/balance` | Get the account balance | 200 |
 | GET | `/accounts/{account_id}/summary` | Totals credited/debited, counts, last activity (used by the UI) | 200 |
 | POST | `/accounts/{account_id}/transactions` | Add a credit or debit | 201 |
@@ -99,7 +100,7 @@ Base URL: `http://localhost:8000`. All request and response bodies are JSON.
 | GET | `/stats` | Overall totals: accounts, money held, transactions (used by the UI) | 200 |
 | GET | `/health` | Health check | 200 |
 
-There are no update or delete endpoints for transactions. Sending `PUT`, `PATCH` or `DELETE` returns `405`.
+There are no update or delete endpoints for individual transactions. Sending `PUT`, `PATCH` or `DELETE` to them returns `405`. The only way transactions are removed is by deleting their whole account (see below).
 
 ### 1. Create account: `POST /accounts`
 
@@ -184,6 +185,18 @@ Response `200`:
 }
 ```
 A page number beyond the last page returns an empty `data` list, together with the correct totals.
+
+### Delete account: `DELETE /accounts/{account_id}`
+
+Permanently deletes the account and **all of its transactions** from the database, in one atomic transaction. If any step fails, nothing is deleted.
+
+Response `200`:
+```json
+{ "deleted_account_id": "68906772-...", "name": "Alice", "final_balance": 70.0, "deleted_transactions": 4 }
+```
+- Returns `404 ACCOUNT_NOT_FOUND` if the account does not exist (including a second delete of the same account).
+- For transfers, only this account's side is deleted. The other account keeps its entry, so its balance still matches its own history.
+- In the web UI, deleting asks for confirmation first, showing the account, its transaction count and the balance that will be removed.
 
 ### 5. Transfer (bonus): `POST /transfers`
 
@@ -293,7 +306,7 @@ curl "localhost:8000/accounts/$A/transactions?type=credit&page=1&limit=10"
 | **No race conditions** | Transactions start with `BEGIN IMMEDIATE`, so concurrent writes are handled one at a time. Two parallel debits cannot both read the same balance. Tests fire 10 parallel debits and 8 parallel duplicate submissions to check this. |
 | **Balance consistency** | The balance changes only inside the same transaction that records the ledger entry. Each transaction also stores `balance_after` for auditing. A `CHECK (balance >= 0)` constraint means the database itself refuses an overdraft. |
 | **Duplicate protection** | The application checks for an existing reference first, and a `UNIQUE (account_id, reference_id)` constraint backs this up even under concurrent requests. |
-| **Immutability** | The API has no update or delete endpoints, and database triggers reject any `UPDATE` or `DELETE` on the `transactions` table. |
+| **Immutability** | The API has no endpoint to edit or delete a single transaction. Database triggers reject any `UPDATE` on `transactions`, and any `DELETE` unless the whole account is being deleted. The delete operation marks the account for deletion, removes its transactions and the account, then clears the mark, all in one database transaction. |
 | **Other constraints** | Foreign key from transaction to account, `CHECK (amount > 0)`, `CHECK (type IN ('credit','debit'))`. |
 | **Money precision** | Amounts are stored as integer cents, so there are no floating point rounding errors (ten credits of 0.10 sum to exactly 1.00). |
 
@@ -311,6 +324,6 @@ curl "localhost:8000/accounts/$A/transactions?type=credit&page=1&limit=10"
 8. **Pagination:** `limit` defaults to 20 and is capped at 100. A page number past the end returns an empty list, not an error.
 9. **Ordering:** "latest first" uses `created_at` (UTC, microsecond precision). If two rows have the same timestamp, insertion order breaks the tie.
 10. **Transfers** create two linked ledger entries (a debit on the source, a credit on the destination) with a shared `transfer_id`. The transfer's `reference_id` must not already be used on either account. Transferring to the same account is rejected. If no description is given, it defaults to "Transfer".
-11. **Accounts cannot be deleted or renamed.** The brief does not ask for this, and keeping accounts preserves the ledger history.
+11. **Account deletion was added on request.** Deleting an account permanently removes it together with all its transactions, even if it still has a balance (the UI warns about this). This is a deliberate exception to transaction immutability. A single transaction still can never be edited or deleted. Accounts cannot be renamed.
 12. **Extra endpoints** `GET /accounts`, `GET /accounts/{id}`, `GET /accounts/{id}/summary` and `GET /stats` were added for the web UI. They are read-only.
 13. **SQLite** is used for easy local setup. To use PostgreSQL, change `DATABASE_URL` and replace the SQLite-specific `BEGIN IMMEDIATE` and triggers with `SELECT ... FOR UPDATE` and a Postgres trigger. The service layer would not need to change.

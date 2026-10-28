@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.config import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from app.config import DEFAULT_PAGE_SIZE, MAX_PAGE, MAX_PAGE_SIZE
 from app.database import get_db
 from app.schemas import (
     AccountCreate,
+    AccountDeletedOut,
     AccountOut,
     AccountPage,
     AccountSummaryOut,
@@ -34,7 +35,7 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)):
 
 @router.get("", response_model=AccountPage, responses=INVALID, summary="List accounts")
 def list_accounts(
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=MAX_PAGE),
     limit: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
 ):
@@ -49,6 +50,26 @@ def list_accounts(
 @router.get("/{account_id}", response_model=AccountOut, responses=NOT_FOUND, summary="Get an account")
 def get_account(account_id: str, db: Session = Depends(get_db)):
     return AccountOut.build(ledger.get_account(db, account_id))
+
+
+@router.delete("/{account_id}", response_model=AccountDeletedOut, responses=NOT_FOUND,
+               summary="Delete an account and all its transactions")
+def delete_account(account_id: str, db: Session = Depends(get_db)):
+    """
+    Permanently deletes the account **and all of its transactions** in one
+    atomic database transaction. This cannot be undone.
+
+    Individual transactions still cannot be edited or deleted. For a transfer,
+    only this account's side is removed; the other account keeps its entry,
+    so its balance stays consistent.
+    """
+    info = ledger.delete_account(db, account_id)
+    return AccountDeletedOut(
+        deleted_account_id=info["id"],
+        name=info["name"],
+        final_balance=from_cents(info["balance"]),
+        deleted_transactions=info["deleted_transactions"],
+    )
 
 
 @router.get("/{account_id}/balance", response_model=BalanceOut, responses=NOT_FOUND,
@@ -107,7 +128,7 @@ def add_transaction(account_id: str, body: TransactionCreate, db: Session = Depe
 def list_transactions(
     account_id: str,
     type: TransactionType | None = Query(None, description="Filter by `credit` or `debit`. Omit for both."),
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=MAX_PAGE),
     limit: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
 ):

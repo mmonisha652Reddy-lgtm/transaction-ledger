@@ -80,6 +80,16 @@
   .btn-debit { background: var(--debit); color: #fff; }
   .btn-glass { background: rgba(255, 255, 255, .16); color: #fff; border-color: rgba(255, 255, 255, .22); }
   .btn-glass:hover { background: rgba(255, 255, 255, .26); }
+  .btn-danger { background: var(--debit); color: #fff; }
+  .btn-danger:hover:not(:disabled) { filter: brightness(.92); }
+  .hero-delete { margin-left: auto; align-self: flex-start; }
+  .hero-delete:hover { background: rgba(220, 59, 59, .55); border-color: rgba(255, 255, 255, .35); }
+  .danger-icon { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: var(--debit-soft); color: var(--debit); margin-bottom: 14px; }
+  .del-account { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; margin: 14px 0; }
+  .del-account .acc-name { font-weight: 600; }
+  .del-list { margin: 0; padding: 12px 14px 12px 32px; background: var(--debit-soft); color: var(--debit); border-radius: 10px; font-size: 13px; font-weight: 500; }
+  .del-list li + li { margin-top: 4px; }
+  .del-list strong { font-weight: 700; }
   .btn .spinner { width: 15px; height: 15px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -295,6 +305,7 @@
   <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol>
   <symbol id="i-dice" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></symbol>
   <symbol id="i-ledger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 7h12M6 12h12M6 17h8"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
 </svg>
 
@@ -360,6 +371,7 @@
                 <span>· Opened <span id="dCreated"></span></span>
               </div>
             </div>
+            <button class="btn btn-glass btn-sm hero-delete" id="deleteBtn" title="Delete account" aria-label="Delete account"><svg width="15" height="15"><use href="#i-trash"/></svg><span class="docs-text">Delete</span></button>
           </div>
           <div class="hero-label">Current balance</div>
           <div class="hero-balance num" id="dBalance"></div>
@@ -471,6 +483,26 @@
     <div class="modal-foot">
       <button type="button" class="btn btn-ghost" data-close>Cancel</button>
       <button type="submit" class="btn btn-primary" id="txSubmit">Add credit</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- delete account -->
+<dialog id="deleteModal" aria-labelledby="delTitle" aria-describedby="delDesc">
+  <form id="deleteForm" novalidate>
+    <div class="modal-head"><span></span>
+      <button type="button" class="btn btn-ghost btn-sm btn-icon" data-close aria-label="Close"><svg width="16" height="16"><use href="#i-x"/></svg></button></div>
+    <div class="modal-body" style="padding-top:0">
+      <div class="form-error" role="alert"><svg width="16" height="16"><use href="#i-alert"/></svg><span></span></div>
+      <div class="danger-icon"><svg width="24" height="24"><use href="#i-trash"/></svg></div>
+      <h2 id="delTitle" style="margin:0 0 6px;font-size:18px">Delete this account?</h2>
+      <p id="delDesc" style="margin:0;color:var(--text-2)">The account and its full transaction history will be permanently removed from the database. This cannot be undone.</p>
+      <div class="del-account" id="delAccount"></div>
+      <ul class="del-list" id="delList"></ul>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" data-close id="delCancel">Cancel</button>
+      <button type="submit" class="btn btn-danger"><svg width="15" height="15"><use href="#i-trash"/></svg>Delete permanently</button>
     </div>
   </form>
 </dialog>
@@ -617,9 +649,13 @@
   }
 
   async function loadAccounts() {
-    const res = await api("/accounts?limit=100");
-    state.accounts = res.data;
-    $("accCount").textContent = res.pagination.total_records;
+    // The API returns at most 100 accounts per page, so fetch every page.
+    const first = await api("/accounts?limit=100&page=1");
+    const rest = await Promise.all(
+      Array.from({ length: Math.max(0, first.pagination.total_pages - 1) }, (_, i) => api(`/accounts?limit=100&page=${i + 2}`))
+    );
+    state.accounts = [first, ...rest].flatMap((r) => r.data);
+    $("accCount").textContent = first.pagination.total_records;
     renderAccounts();
     renderWelcome();
   }
@@ -951,6 +987,31 @@
       const toName = state.accounts.find((a) => a.id === r.to_account_id)?.name || "destination";
       toast("Transfer complete", `${money(r.amount)} moved from ${fromName} to ${toName}.`);
       await refreshAll();
+    });
+  });
+
+  // delete account
+  $("deleteBtn").onclick = () => {
+    const s = state.summary;
+    if (!s) return;
+    $("delAccount").innerHTML = `${avatar(s.name)}<div style="min-width:0"><div class="acc-name">${esc(s.name)}</div><div class="acc-id">${esc(s.account_id)}</div></div>`;
+    const n = s.transaction_count;
+    const items = [`<li><strong>${n}</strong> transaction${n === 1 ? "" : "s"} will be deleted</li>`];
+    if (s.balance > 0) items.push(`<li>The remaining balance of <strong>${money(s.balance)}</strong> will be removed</li>`);
+    items.push("<li>Transfers with other accounts stay in those accounts' history</li>");
+    $("delList").innerHTML = items.join("");
+    openModal("deleteModal");
+    setTimeout(() => $("delCancel").focus(), 30);  // safe default
+  };
+  $("deleteForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitting(e.target, async () => {
+      const r = await api(`/accounts/${state.selected}`, { method: "DELETE" });
+      $("deleteModal").close();
+      state.selected = null; state.summary = null;
+      history.replaceState(null, "", location.pathname);
+      toast("Account deleted", `${r.name} and ${r.deleted_transactions} transaction${r.deleted_transactions === 1 ? "" : "s"} were removed.`);
+      await Promise.all([loadStats(), loadAccounts()]);
     });
   });
 

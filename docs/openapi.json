@@ -70,6 +70,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 1000000000,
               "minimum": 1,
               "default": 1,
               "title": "Page"
@@ -147,6 +148,57 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AccountOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Delete an account and all its transactions",
+        "description": "Permanently deletes the account **and all of its transactions** in one\natomic database transaction. This cannot be undone.\n\nIndividual transactions still cannot be edited or deleted. For a transfer,\nonly this account's side is removed; the other account keeps its entry,\nso its balance stays consistent.",
+        "operationId": "delete_account_accounts__account_id__delete",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Account Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletedOut"
                 }
               }
             }
@@ -401,6 +453,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 1000000000,
               "minimum": 1,
               "default": 1,
               "title": "Page"
@@ -596,6 +649,34 @@
           "name"
         ],
         "title": "AccountCreate"
+      },
+      "AccountDeletedOut": {
+        "properties": {
+          "deleted_account_id": {
+            "type": "string",
+            "title": "Deleted Account Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "final_balance": {
+            "type": "number",
+            "title": "Final Balance"
+          },
+          "deleted_transactions": {
+            "type": "integer",
+            "title": "Deleted Transactions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deleted_account_id",
+          "name",
+          "final_balance",
+          "deleted_transactions"
+        ],
+        "title": "AccountDeletedOut"
       },
       "AccountOut": {
         "properties": {

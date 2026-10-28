@@ -442,3 +442,124 @@ def test_business_and_query_messages(client, make_account, tx):
     assert client.get(f"/accounts/{a}/transactions?limit=500").json()["error"]["message"] == \
         "Limit must not be more than 100."
     assert client.get(f"/accounts/{a}/transactions?page=x").json()["error"]["message"] == "Page must be a whole number."
+
+
+# ---------- edge cases ----------
+
+def test_huge_page_number_is_rejected_not_crash(client, make_account):
+    a = make_account()
+    for url in (f"/accounts/{a}/transactions", "/accounts"):
+        r = client.get(url, params={"page": 10**21})
+        assert r.status_code == 400
+        assert r.json()["error"]["message"] == "Page must not be more than 1,000,000,000."
+
+
+def test_null_description_treated_as_empty(client, make_account):
+    a = make_account()
+    r = client.post(f"/accounts/{a}/transactions",
+                    json={"type": "credit", "amount": 5, "reference_id": "n", "description": None})
+    assert r.status_code == 201 and r.json()["description"] == ""
+
+
+def test_boolean_amount_rejected(client, make_account):
+    a = make_account()
+    r = client.post(f"/accounts/{a}/transactions", json={"type": "credit", "amount": True, "reference_id": "b"})
+    assert r.status_code == 400 and r.json()["error"]["message"] == "Amount must be a valid number."
+
+
+def test_accounts_list_paginates_past_100(client, make_account):
+    for i in range(105):
+        make_account(f"User {i}")
+    p2 = client.get("/accounts", params={"page": 2, "limit": 100}).json()
+    assert p2["pagination"] == {"page": 2, "limit": 100, "total_records": 105, "total_pages": 2}
+    assert len(p2["data"]) == 5
+
+
+# ---------- delete account ----------
+
+def _db_count(sql, **params):
+    with engine.connect() as conn:
+        return conn.execute(text(sql), params).scalar()
+
+
+def test_delete_account_removes_account_and_transactions(client, make_account, tx):
+    a, keep = make_account("Gone"), make_account("Stays")
+    tx(a, "credit", 100, "1")
+    tx(a, "debit", 40, "2")
+    tx(keep, "credit", 10, "1")
+
+    r = client.delete(f"/accounts/{a}")
+    assert r.status_code == 200
+    assert r.json() == {"deleted_account_id": a, "name": "Gone", "final_balance": 60, "deleted_transactions": 2}
+
+    # really gone from SQLite
+    assert _db_count("SELECT COUNT(*) FROM accounts WHERE id = :id", id=a) == 0
+    assert _db_count("SELECT COUNT(*) FROM transactions WHERE account_id = :id", id=a) == 0
+    assert _db_count("SELECT COUNT(*) FROM account_deletions") == 0
+    # other accounts untouched
+    assert balance(client, keep) == 10
+    assert _db_count("SELECT COUNT(*) FROM transactions WHERE account_id = :id", id=keep) == 1
+    # API now reports it as missing
+    for url in (f"/accounts/{a}", f"/accounts/{a}/balance", f"/accounts/{a}/transactions"):
+        assert client.get(url).status_code == 404
+    assert client.get("/stats").json() == {"total_accounts": 1, "total_balance": 10, "total_transactions": 1}
+
+
+def test_delete_unknown_account(client):
+    r = client.delete("/accounts/nope")
+    assert r.status_code == 404 and r.json()["error"]["code"] == "ACCOUNT_NOT_FOUND"
+
+
+def test_delete_twice(client, make_account):
+    a = make_account()
+    assert client.delete(f"/accounts/{a}").status_code == 200
+    assert client.delete(f"/accounts/{a}").status_code == 404
+
+
+def test_delete_account_with_transfer_keeps_other_side(client, make_account, tx):
+    a, b = make_account("A"), make_account("B")
+    tx(a, "credit", 100, "s")
+    client.post("/transfers", json={"from_account_id": a, "to_account_id": b, "amount": 30, "reference_id": "t"})
+    assert client.delete(f"/accounts/{a}").status_code == 200
+    assert balance(client, b) == 30
+    hist = client.get(f"/accounts/{b}/transactions").json()["data"]
+    assert len(hist) == 1 and hist[0]["transfer_id"]
+
+
+def test_single_transaction_delete_still_blocked(client, make_account, tx):
+    a = make_account()
+    tx(a, "credit", 10, "r1")
+    with engine.connect() as conn:
+        with pytest.raises(DatabaseError):
+            conn.execute(text("DELETE FROM transactions WHERE account_id = :id"), {"id": a})
+        conn.rollback()
+    assert balance(client, a) == 10
+
+
+def test_delete_is_atomic(client, make_account, tx, monkeypatch):
+    """If the account row can't be deleted, its transactions must come back too."""
+    from app.services import ledger
+    a = make_account()
+    tx(a, "credit", 10, "r1")
+    original_delete = ledger.delete
+
+    def broken_delete(model):
+        if model is ledger.Account:
+            raise RuntimeError("simulated failure")
+        return original_delete(model)
+
+    monkeypatch.setattr(ledger, "delete", broken_delete)
+    with pytest.raises(RuntimeError):
+        client.delete(f"/accounts/{a}")
+    monkeypatch.undo()
+    assert balance(client, a) == 10
+    assert _db_count("SELECT COUNT(*) FROM transactions WHERE account_id = :id", id=a) == 1
+    assert _db_count("SELECT COUNT(*) FROM account_deletions") == 0
+
+
+def test_reference_reusable_after_account_deleted(client, make_account, tx):
+    a = make_account()
+    tx(a, "credit", 10, "REF")
+    client.delete(f"/accounts/{a}")
+    b = make_account()
+    assert tx(b, "credit", 10, "REF").status_code == 201
