@@ -2,6 +2,9 @@
 
 A backend API (plus a small web UI) for a simple transaction ledger: create accounts, post credit and debit transactions, check balances, browse transaction history, and transfer money between accounts.
 
+**Live demo:** https://transaction-ledger-api-km23.onrender.com (web UI) · [API docs](https://transaction-ledger-api-km23.onrender.com/docs)
+The demo runs on Render's free plan, so the first request after a period of inactivity may take up to a minute, and the data resets when the service restarts.
+
 **Stack:** Python 3.11+ · FastAPI · SQLAlchemy 2 · SQLite · Pydantic v2 · pytest
 
 FastAPI was chosen because it gives request validation and interactive API documentation (Swagger UI) out of the box. SQLite was chosen so the project runs locally with no database server to install. It still enforces foreign keys, unique and check constraints, triggers, and atomic transactions.
