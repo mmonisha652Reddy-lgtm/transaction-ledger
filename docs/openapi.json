@@ -226,6 +226,58 @@
         }
       }
     },
+    "/accounts/{account_id}/summary": {
+      "get": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Get account summary (totals and counts)",
+        "operationId": "get_summary_accounts__account_id__summary_get",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Account Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountSummaryOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/accounts/{account_id}/transactions": {
       "post": {
         "tags": [
@@ -501,6 +553,27 @@
           }
         }
       }
+    },
+    "/stats": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Overall ledger stats",
+        "operationId": "stats_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsOut"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -572,6 +645,67 @@
           "pagination"
         ],
         "title": "AccountPage"
+      },
+      "AccountSummaryOut": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "title": "Account Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "balance": {
+            "type": "number",
+            "title": "Balance"
+          },
+          "total_credits": {
+            "type": "number",
+            "title": "Total Credits"
+          },
+          "total_debits": {
+            "type": "number",
+            "title": "Total Debits"
+          },
+          "credit_count": {
+            "type": "integer",
+            "title": "Credit Count"
+          },
+          "debit_count": {
+            "type": "integer",
+            "title": "Debit Count"
+          },
+          "transaction_count": {
+            "type": "integer",
+            "title": "Transaction Count"
+          },
+          "last_transaction_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Transaction At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "name",
+          "balance",
+          "total_credits",
+          "total_debits",
+          "credit_count",
+          "debit_count",
+          "transaction_count",
+          "last_transaction_at"
+        ],
+        "title": "AccountSummaryOut"
       },
       "BalanceOut": {
         "properties": {
@@ -683,6 +817,29 @@
           "total_pages"
         ],
         "title": "Pagination"
+      },
+      "StatsOut": {
+        "properties": {
+          "total_accounts": {
+            "type": "integer",
+            "title": "Total Accounts"
+          },
+          "total_balance": {
+            "type": "number",
+            "title": "Total Balance"
+          },
+          "total_transactions": {
+            "type": "integer",
+            "title": "Total Transactions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_accounts",
+          "total_balance",
+          "total_transactions"
+        ],
+        "title": "StatsOut"
       },
       "TransactionCreate": {
         "properties": {

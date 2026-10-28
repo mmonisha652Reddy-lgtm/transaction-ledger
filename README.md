@@ -43,9 +43,21 @@ On Render's free plan the filesystem is temporary, so the SQLite data resets whe
 pytest -q
 ```
 
-The 45 tests cover every requirement in the brief, including concurrent debits, concurrent duplicate submissions, and rollback on failure.
+The 63 tests cover every requirement in the brief, including concurrent debits, concurrent duplicate submissions, and rollback on failure.
 
 ---
+
+## Web UI
+
+The frontend is a single page ([app/static/index.html](app/static/index.html)) written in plain HTML, CSS and JavaScript, with no build step. The API serves it at `/`.
+
+- Dashboard showing total accounts, total money held, and total transactions
+- Account list with search (press `/` to focus it)
+- Account view with balance, total credited and debited, last activity, and a button to copy the account ID
+- Transaction history with Credit/Debit filter, page size, numbered pagination, loading placeholders, and messages for empty lists
+- Forms for new accounts, credits/debits and transfers. They preview the balance after the change, warn before an overdraft, and show the API's error messages next to the relevant field
+- Light and dark themes (follows the system setting, with a toggle), works on phone screens, keyboard accessible
+- A "waking up" screen while the free hosting plan starts up
 
 ## Project structure
 
@@ -80,9 +92,11 @@ Base URL: `http://localhost:8000`. All request and response bodies are JSON.
 | GET | `/accounts` | List accounts (paginated) | 200 |
 | GET | `/accounts/{account_id}` | Get an account | 200 |
 | GET | `/accounts/{account_id}/balance` | Get the account balance | 200 |
+| GET | `/accounts/{account_id}/summary` | Totals credited/debited, counts, last activity (used by the UI) | 200 |
 | POST | `/accounts/{account_id}/transactions` | Add a credit or debit | 201 |
 | GET | `/accounts/{account_id}/transactions` | Transaction history (filter, paginate, latest first) | 200 |
 | POST | `/transfers` | Transfer between accounts (bonus) | 201 |
+| GET | `/stats` | Overall totals: accounts, money held, transactions (used by the UI) | 200 |
 | GET | `/health` | Health check | 200 |
 
 There are no update or delete endpoints for transactions. Sending `PUT`, `PATCH` or `DELETE` returns `405`.
@@ -204,7 +218,7 @@ Every error response has the same shape:
 {
   "error": {
     "code": "INSUFFICIENT_BALANCE",
-    "message": "Insufficient balance for this debit.",
+    "message": "Insufficient balance. Available balance is 100.00, but 150.00 was requested.",
     "details": { "account_id": "...", "balance": 100.0, "requested_amount": 150.0 }
   }
 }
@@ -225,7 +239,39 @@ Every error response has the same shape:
 | 422 | `INSUFFICIENT_BALANCE` | Debit or transfer amount is more than the balance |
 | 500 | `INTERNAL_ERROR` | Unexpected server error (no internal details are exposed) |
 
-For validation errors, `details` lists each problem as `{ "field": "...", "message": "..." }`.
+For validation errors, `details` lists one readable message per field, and `message` summarises them. If only one field is wrong, `message` is that field's message:
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Some fields are invalid. Please correct them and try again.",
+    "details": [
+      { "field": "type", "message": "Transaction type is required." },
+      { "field": "amount", "message": "Amount is required." },
+      { "field": "reference_id", "message": "Reference ID is required." }
+    ]
+  }
+}
+```
+
+All messages follow the same pattern:
+
+| Situation | Message |
+|---|---|
+| Missing or empty field | `Account holder name is required.` |
+| Too long | `Description must be at most 255 characters.` |
+| Wrong type | `Account holder name must be text.` / `Amount must be a valid number.` / `Page must be a whole number.` |
+| Out of range | `Amount must be greater than 0.` / `Amount must not be more than 1,000,000,000.` / `Page must be 1 or more.` |
+| Too many decimals | `Amount can have at most 2 decimal places.` |
+| Invalid choice | `Transaction type must be either 'credit' or 'debit'.` |
+| Server-managed field sent | `Balance cannot be set. New accounts always start with a balance of 0.` |
+| Unknown field | `'foo' is not an allowed field.` |
+| Bad body | `Request body must be valid JSON.` / `Request body must be a JSON object.` |
+| Insufficient balance | `Insufficient balance. Available balance is 5.00, but 10.00 was requested.` |
+| Duplicate | `Duplicate transaction. Reference ID 'R1' has already been used for this account.` |
+| Unknown account | `Account not found. Please check the account ID.` |
+
+The web UI shows each message under the related form field.
 
 ### Example session (curl)
 
@@ -266,5 +312,5 @@ curl "localhost:8000/accounts/$A/transactions?type=credit&page=1&limit=10"
 9. **Ordering:** "latest first" uses `created_at` (UTC, microsecond precision). If two rows have the same timestamp, insertion order breaks the tie.
 10. **Transfers** create two linked ledger entries (a debit on the source, a credit on the destination) with a shared `transfer_id`. The transfer's `reference_id` must not already be used on either account. Transferring to the same account is rejected. If no description is given, it defaults to "Transfer".
 11. **Accounts cannot be deleted or renamed.** The brief does not ask for this, and keeping accounts preserves the ledger history.
-12. **Extra endpoints** `GET /accounts` and `GET /accounts/{id}` were added so the UI can list and select accounts.
+12. **Extra endpoints** `GET /accounts`, `GET /accounts/{id}`, `GET /accounts/{id}/summary` and `GET /stats` were added for the web UI. They are read-only.
 13. **SQLite** is used for easy local setup. To use PostgreSQL, change `DATABASE_URL` and replace the SQLite-specific `BEGIN IMMEDIATE` and triggers with `SELECT ... FOR UPDATE` and a Postgres trigger. The service layer would not need to change.

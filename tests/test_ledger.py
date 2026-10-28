@@ -353,3 +353,92 @@ def test_transfer_duplicate(client, make_account, tx):
     assert _transfer(client, a, b, 30).status_code == 201
     assert _transfer(client, a, b, 30).status_code == 409
     assert balance(client, a) == 70 and balance(client, b) == 30
+
+
+# ---------- UI support endpoints ----------
+
+def test_account_summary(client, make_account, tx):
+    a = make_account()
+    s = client.get(f"/accounts/{a}/summary").json()
+    assert s["transaction_count"] == 0 and s["last_transaction_at"] is None
+    tx(a, "credit", 100, "1")
+    tx(a, "credit", 50.5, "2")
+    tx(a, "debit", 20, "3")
+    s = client.get(f"/accounts/{a}/summary").json()
+    assert s["total_credits"] == 150.5 and s["total_debits"] == 20
+    assert s["credit_count"] == 2 and s["debit_count"] == 1 and s["transaction_count"] == 3
+    assert s["balance"] == 130.5 and s["last_transaction_at"].endswith("Z")
+    assert client.get("/accounts/nope/summary").status_code == 404
+
+
+def test_stats(client, make_account, tx):
+    assert client.get("/stats").json() == {"total_accounts": 0, "total_balance": 0, "total_transactions": 0}
+    a, b = make_account("A"), make_account("B")
+    tx(a, "credit", 100, "1")
+    tx(b, "credit", 25, "1")
+    assert client.get("/stats").json() == {"total_accounts": 2, "total_balance": 125, "total_transactions": 2}
+
+
+# ---------- standardized error messages ----------
+
+@pytest.mark.parametrize(
+    "payload,field,message",
+    [
+        ({}, "name", "Account holder name is required."),
+        ({"name": ""}, "name", "Account holder name is required."),
+        ({"name": "   "}, "name", "Account holder name is required."),
+        ({"name": None}, "name", "Account holder name is required."),
+        ({"name": 5}, "name", "Account holder name must be text."),
+        ({"name": "x" * 101}, "name", "Account holder name must be at most 100 characters."),
+        ({"name": "A", "balance": 5}, "balance", "Balance cannot be set. New accounts always start with a balance of 0."),
+    ],
+)
+def test_account_messages(client, payload, field, message):
+    err = client.post("/accounts", json=payload).json()["error"]
+    assert err["message"] == message
+    assert err["details"] == [{"field": field, "message": message}]
+
+
+@pytest.mark.parametrize(
+    "payload,message",
+    [
+        ({"type": "refund", "amount": 10, "reference_id": "r"}, "Transaction type must be either 'credit' or 'debit'."),
+        ({"type": "credit", "amount": 0, "reference_id": "r"}, "Amount must be greater than 0."),
+        ({"type": "credit", "amount": "abc", "reference_id": "r"}, "Amount must be a valid number."),
+        ({"type": "credit", "amount": 1.234, "reference_id": "r"}, "Amount can have at most 2 decimal places."),
+        ({"type": "credit", "amount": 1e10, "reference_id": "r"}, "Amount must not be more than 1,000,000,000."),
+        ({"type": "credit", "amount": 10}, "Reference ID is required."),
+        ({"type": "credit", "amount": 10, "reference_id": "r", "description": "d" * 300},
+         "Description must be at most 255 characters."),
+    ],
+)
+def test_transaction_messages(client, make_account, payload, message):
+    a = make_account()
+    assert client.post(f"/accounts/{a}/transactions", json=payload).json()["error"]["message"] == message
+
+
+def test_multiple_errors_listed_per_field(client, make_account):
+    a = make_account()
+    err = client.post(f"/accounts/{a}/transactions", json={}).json()["error"]
+    assert err["code"] == "VALIDATION_ERROR"
+    assert err["message"] == "Some fields are invalid. Please correct them and try again."
+    assert err["details"] == [
+        {"field": "type", "message": "Transaction type is required."},
+        {"field": "amount", "message": "Amount is required."},
+        {"field": "reference_id", "message": "Reference ID is required."},
+    ]
+
+
+def test_business_and_query_messages(client, make_account, tx):
+    a = make_account()
+    tx(a, "credit", 5, "dup")
+    assert tx(a, "debit", 10, "x").json()["error"]["message"] == \
+        "Insufficient balance. Available balance is 5.00, but 10.00 was requested."
+    assert tx(a, "credit", 5, "dup").json()["error"]["message"] == \
+        "Duplicate transaction. Reference ID 'dup' has already been used for this account."
+    assert client.get("/accounts/nope/balance").json()["error"]["message"] == \
+        "Account not found. Please check the account ID."
+    assert client.get(f"/accounts/{a}/transactions?page=0").json()["error"]["message"] == "Page must be 1 or more."
+    assert client.get(f"/accounts/{a}/transactions?limit=500").json()["error"]["message"] == \
+        "Limit must not be more than 100."
+    assert client.get(f"/accounts/{a}/transactions?page=x").json()["error"]["message"] == "Page must be a whole number."

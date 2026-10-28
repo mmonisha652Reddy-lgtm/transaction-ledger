@@ -97,6 +97,28 @@ class TransactionOut(BaseModel):
         )
 
 
+class AccountSummaryOut(BaseModel):
+    account_id: str
+    name: str
+    balance: float
+    total_credits: float
+    total_debits: float
+    credit_count: int
+    debit_count: int
+    transaction_count: int
+    last_transaction_at: datetime | None
+
+    @field_serializer("last_transaction_at")
+    def _ser_last(self, v):
+        return _utc(v) if v else None
+
+
+class StatsOut(BaseModel):
+    total_accounts: int
+    total_balance: float
+    total_transactions: int
+
+
 class Pagination(BaseModel):
     page: int
     limit: int

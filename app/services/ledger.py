@@ -53,7 +53,7 @@ def _find_by_reference(db: Session, account_id: str, reference_id: str) -> Trans
 
 def _raise_duplicate(existing: Transaction) -> None:
     raise DuplicateTransaction(
-        f"A transaction with reference_id '{existing.reference_id}' already exists for this account.",
+        f"Duplicate transaction. Reference ID '{existing.reference_id}' has already been used for this account.",
         {"existing_transaction": TransactionOut.build(existing).model_dump(mode="json")},
     )
 
@@ -75,7 +75,8 @@ def _post(
     if tx_type == TransactionType.debit:
         if account.balance < amount_cents:
             raise InsufficientBalance(
-                "Insufficient balance for this debit.",
+                f"Insufficient balance. Available balance is {from_cents(account.balance):,.2f}, "
+                f"but {from_cents(amount_cents):,.2f} was requested.",
                 {
                     "account_id": account.id,
                     "balance": from_cents(account.balance),
@@ -133,6 +134,37 @@ def list_transactions(
     ).all()
     total_pages = math.ceil(total / limit) if total else 0
     return list(rows), total, total_pages
+
+
+# ---------- insights ----------
+
+def account_summary(db: Session, account_id: str) -> dict:
+    account = get_account(db, account_id)
+    rows = db.execute(
+        select(Transaction.type, func.count(), func.coalesce(func.sum(Transaction.amount), 0))
+        .where(Transaction.account_id == account_id)
+        .group_by(Transaction.type)
+    ).all()
+    by_type = {t: (count, total) for t, count, total in rows}
+    credit_count, credit_total = by_type.get("credit", (0, 0))
+    debit_count, debit_total = by_type.get("debit", (0, 0))
+    last_at = db.scalar(select(func.max(Transaction.created_at)).where(Transaction.account_id == account_id))
+    return {
+        "account": account,
+        "total_credits": credit_total,
+        "total_debits": debit_total,
+        "credit_count": credit_count,
+        "debit_count": debit_count,
+        "last_transaction_at": last_at,
+    }
+
+
+def ledger_stats(db: Session) -> dict:
+    accounts, balance = db.execute(
+        select(func.count(), func.coalesce(func.sum(Account.balance), 0)).select_from(Account)
+    ).one()
+    transactions = db.scalar(select(func.count()).select_from(Transaction))
+    return {"total_accounts": accounts, "total_balance": balance, "total_transactions": transactions}
 
 
 # ---------- transfers ----------

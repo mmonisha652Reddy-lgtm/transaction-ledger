@@ -7,6 +7,7 @@ from app.schemas import (
     AccountCreate,
     AccountOut,
     AccountPage,
+    AccountSummaryOut,
     BalanceOut,
     ErrorResponse,
     Pagination,
@@ -55,6 +56,24 @@ def get_account(account_id: str, db: Session = Depends(get_db)):
 def get_balance(account_id: str, db: Session = Depends(get_db)):
     account = ledger.get_account(db, account_id)
     return BalanceOut(account_id=account.id, name=account.name, balance=from_cents(account.balance))
+
+
+@router.get("/{account_id}/summary", response_model=AccountSummaryOut, responses=NOT_FOUND,
+            summary="Get account summary (totals and counts)")
+def get_summary(account_id: str, db: Session = Depends(get_db)):
+    s = ledger.account_summary(db, account_id)
+    a = s["account"]
+    return AccountSummaryOut(
+        account_id=a.id,
+        name=a.name,
+        balance=from_cents(a.balance),
+        total_credits=from_cents(s["total_credits"]),
+        total_debits=from_cents(s["total_debits"]),
+        credit_count=s["credit_count"],
+        debit_count=s["debit_count"],
+        transaction_count=s["credit_count"] + s["debit_count"],
+        last_transaction_at=s["last_transaction_at"],
+    )
 
 
 @router.post(
