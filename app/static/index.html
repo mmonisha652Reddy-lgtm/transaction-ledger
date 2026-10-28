@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transaction Ledger</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #fff; --text: #1d2330; --muted: #6b7385; --border: #e2e5ec;
+    --primary: #2f5bea; --credit: #128a4a; --debit: #c73636; --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--card); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  main { display: grid; grid-template-columns: 320px 1fr; gap: 20px; padding: 20px 24px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 16px; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 20px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+  input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font: inherit; background: #fff; }
+  button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--primary); color: #fff; font: inherit; font-weight: 500; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.secondary { background: #eef1f7; color: var(--text); }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .mt { margin-top: 12px; }
+  .accounts { list-style: none; margin: 0; padding: 0; max-height: 340px; overflow: auto; }
+  .accounts li { padding: 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  .accounts li:hover { background: #f0f3fa; }
+  .accounts li.active { background: #e6ecfd; }
+  .accounts .bal { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .empty { color: var(--muted); padding: 10px 0; }
+  .balance { font-size: 32px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .meta { color: var(--muted); font-size: 12px; word-break: break-all; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; }
+  .tag { padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 500; }
+  .tag.credit { background: #e3f5ea; color: var(--credit); }
+  .tag.debit { background: #fbe7e7; color: var(--debit); }
+  .pager { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; color: var(--muted); }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .toolbar select { width: auto; }
+  #toast { position: fixed; right: 20px; bottom: 20px; max-width: 380px; padding: 12px 14px; border-radius: 8px; color: #fff; display: none; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
+  #toast.ok { background: var(--credit); } #toast.err { background: var(--debit); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Transaction Ledger</h1>
+  <a href="/docs" target="_blank">API Docs ↗</a>
+</header>
+
+<main>
+  <section>
+    <div class="card">
+      <h2>New account</h2>
+      <form id="accountForm">
+        <label for="accName">Account holder name</label>
+        <input id="accName" required maxlength="100" placeholder="e.g. Alice">
+        <button class="mt" type="submit">Create account</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Accounts</h2>
+      <ul id="accountList" class="accounts"></ul>
+    </div>
+
+    <div class="card">
+      <h2>Transfer money</h2>
+      <form id="transferForm">
+        <label for="trFrom">From</label>
+        <select id="trFrom" required></select>
+        <label for="trTo">To</label>
+        <select id="trTo" required></select>
+        <div class="row">
+          <div><label for="trAmount">Amount</label><input id="trAmount" type="number" step="0.01" min="0.01" required></div>
+          <div><label for="trRef">Reference ID</label><input id="trRef" required maxlength="100"></div>
+        </div>
+        <label for="trDesc">Description</label>
+        <input id="trDesc" maxlength="255" placeholder="Optional">
+        <button class="mt" type="submit">Transfer</button>
+      </form>
+    </div>
+  </section>
+
+  <section>
+    <div id="noSelection" class="card empty">Create or select an account to see its balance and transactions.</div>
+
+    <div id="detail" class="hidden">
+      <div class="card">
+        <div class="meta">Balance — <span id="dName"></span></div>
+        <div class="balance" id="dBalance"></div>
+        <div class="meta">ID: <span id="dId"></span></div>
+      </div>
+
+      <div class="card">
+        <h2>Add transaction</h2>
+        <form id="txForm">
+          <div class="row">
+            <div><label for="txType">Type</label>
+              <select id="txType"><option value="credit">Credit</option><option value="debit">Debit</option></select></div>
+            <div><label for="txAmount">Amount</label><input id="txAmount" type="number" step="0.01" min="0.01" required></div>
+            <div><label for="txRef">Reference ID</label><input id="txRef" required maxlength="100"></div>
+          </div>
+          <label for="txDesc">Description</label>
+          <input id="txDesc" maxlength="255" placeholder="Optional">
+          <button class="mt" type="submit">Add transaction</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <h2 style="margin:0">Transaction history</h2>
+          <div class="row" style="flex:0">
+            <select id="filterType"><option value="">All types</option><option value="credit">Credit</option><option value="debit">Debit</option></select>
+            <select id="pageSize"><option>5</option><option selected>10</option><option>20</option><option>50</option></select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Description</th><th class="num">Amount</th><th class="num">Balance after</th></tr></thead>
+            <tbody id="txBody"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <span id="pageInfo"></span>
+          <div class="row" style="flex:0">
+            <button class="secondary" id="prevBtn">Previous</button>
+            <button class="secondary" id="nextBtn">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { accounts: [], selected: null, page: 1, totalPages: 0 };
+const money = (n) => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const newRef = (p) => `${p}-${Date.now().toString(36).toUpperCase()}`;
+
+async function api(path, options = {}) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e = body.error || {};
+    let msg = e.message || `Request failed (${res.status})`;
+    if (Array.isArray(e.details) && e.details.length) msg += " " + e.details.map(d => `${d.field}: ${d.message}`).join("; ");
+    throw new Error(msg);
+  }
+  return body;
+}
+
+let toastTimer;
+function toast(msg, ok = true) {
+  const t = $("toast");
+  t.textContent = msg; t.className = ok ? "ok" : "err"; t.style.display = "block";
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.style.display = "none"), 4000);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function loadAccounts() {
+  const res = await api("/accounts?limit=100");
+  state.accounts = res.data;
+  const list = $("accountList");
+  list.innerHTML = state.accounts.length ? "" : '<li class="empty">No accounts yet</li>';
+  for (const a of state.accounts) {
+    const li = document.createElement("li");
+    li.className = a.id === state.selected ? "active" : "";
+    li.innerHTML = `<span>${escapeHtml(a.name)}</span><span class="bal">${money(a.balance)}</span>`;
+    li.onclick = () => selectAccount(a.id);
+    list.appendChild(li);
+  }
+  const opts = state.accounts.map(a => `<option value="${a.id}">${escapeHtml(a.name)} (${money(a.balance)})</option>`).join("");
+  for (const id of ["trFrom", "trTo"]) {
+    const prev = $(id).value; $(id).innerHTML = opts; if (prev) $(id).value = prev;
+  }
+  if (state.accounts.length > 1 && $("trFrom").value === $("trTo").value) $("trTo").selectedIndex = 1;
+}
+
+async function selectAccount(id) {
+  state.selected = id; state.page = 1;
+  $("txRef").value = newRef("TXN");
+  await refresh();
+}
+
+async function refresh() {
+  await loadAccounts();
+  if (!state.selected) return;
+  $("noSelection").classList.add("hidden"); $("detail").classList.remove("hidden");
+  const b = await api(`/accounts/${state.selected}/balance`);
+  $("dName").textContent = b.name; $("dBalance").textContent = money(b.balance); $("dId").textContent = b.account_id;
+  await loadHistory();
+}
+
+async function loadHistory() {
+  const params = new URLSearchParams({ page: state.page, limit: $("pageSize").value });
+  if ($("filterType").value) params.set("type", $("filterType").value);
+  const res = await api(`/accounts/${state.selected}/transactions?${params}`);
+  const p = res.pagination; state.totalPages = p.total_pages;
+  $("txBody").innerHTML = res.data.length ? res.data.map(t => `
+    <tr>
+      <td>${new Date(t.created_at).toLocaleString()}</td>
+      <td><span class="tag ${t.type}">${t.type}</span></td>
+      <td>${escapeHtml(t.reference_id)}</td>
+      <td>${escapeHtml(t.description)}</td>
+      <td class="num">${t.type === "debit" ? "−" : "+"}${money(t.amount)}</td>
+      <td class="num">${money(t.balance_after)}</td>
+    </tr>`).join("") : '<tr><td colspan="6" class="empty">No transactions</td></tr>';
+  $("pageInfo").textContent = `Page ${p.total_pages ? p.page : 0} of ${p.total_pages} · ${p.total_records} records`;
+  $("prevBtn").disabled = p.page <= 1;
+  $("nextBtn").disabled = p.page >= p.total_pages;
+}
+
+$("accountForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const a = await api("/accounts", { method: "POST", body: JSON.stringify({ name: $("accName").value }) });
+    $("accName").value = ""; toast(`Account "${a.name}" created`);
+    await selectAccount(a.id);
+  } catch (err) { toast(err.message, false); }
+};
+
+$("txForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const body = { type: $("txType").value, amount: $("txAmount").value, reference_id: $("txRef").value, description: $("txDesc").value };
+    await api(`/accounts/${state.selected}/transactions`, { method: "POST", body: JSON.stringify(body) });
+    toast(`${body.type === "credit" ? "Credit" : "Debit"} of ${money(body.amount)} added`);
+    $("txAmount").value = ""; $("txDesc").value = ""; $("txRef").value = newRef("TXN");
+    state.page = 1; await refresh();
+  } catch (err) { toast(err.message, false); }
+};
+
+$("transferForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const body = { from_account_id: $("trFrom").value, to_account_id: $("trTo").value, amount: $("trAmount").value,
+                   reference_id: $("trRef").value, description: $("trDesc").value };
+    await api("/transfers", { method: "POST", body: JSON.stringify(body) });
+    toast(`Transferred ${money(body.amount)}`);
+    $("trAmount").value = ""; $("trDesc").value = ""; $("trRef").value = newRef("TRF");
+    await refresh();
+  } catch (err) { toast(err.message, false); }
+};
+
+$("filterType").onchange = $("pageSize").onchange = () => { state.page = 1; loadHistory().catch(e => toast(e.message, false)); };
+$("prevBtn").onclick = () => { state.page--; loadHistory(); };
+$("nextBtn").onclick = () => { state.page++; loadHistory(); };
+
+$("trRef").value = newRef("TRF");
+loadAccounts().catch(e => toast(e.message, false));
+</script>
+</body>
+</html>
